@@ -11,32 +11,26 @@
 
 # File loader method finds all code files in a given directory and its subdirectories.
 # Only Ruby files at the moment (for testing)
-def file_loader(folder_path)
-  code_files = []
+def file_loader
+  # Asking git directly which files are in the staging area right now
+  # --cached targets the stage, --name-only returns just the file paths without the code diffs
+  # The backticks ` ` execute the command in the OS shell and return the output as a string
+  staged_files_raw = `git diff --cached --name-only`
 
-  # Pulling every single item name from the directory and spinning up a loop to inspect them one by one
-  Dir.entries(folder_path).each do |item|
-    # Bailing out immediately if the item is '.' or '..' because processing these system links causes an infinite loop (my pc goes vrom vrom).
-    next if item == '.' || item == '..'
+  # Splitting the raw multi-line string into an array of individual file paths
+  all_staged_files = staged_files_raw.split("\n")
 
-    # Gluing the base folder path and the item name together so the OS knows exactly where to look
-    full_path = File.join(folder_path, item)
-
-    # Asking the operating system straight up: is this path pointing to another folder?
-    if File.directory?(full_path)
-      # The actual inception: calling ourselves with the new folder path and dumping the results into our current bucket
-      code_files.concat(file_loader(full_path))
-
-    # Catching the fallback scenario where the item is just a file, checking if it wears the ruby extension
-    elsif item.end_with?('.rb')
-      # Throwing the confirmed ruby file path into our collection
-      code_files << full_path
-      
-    end
+  # Filtering the array to keep only the ruby files that actually exist on the disk
+  ruby_files = all_staged_files.select do |file_path|
+    # Making sure it has a .rb extension AND checking if the file exists
+    # We must check File.exist? because if you DELETE a ruby file and commit the deletion,
+    # git will list it, but our File.foreach would crash trying to read a ghost file
+    file_path.end_with?('.rb') && File.exist?(file_path)
+  # Closing the filter block
   end
-  # implicit return :)
-  code_files
-# Sealing the method definition
+
+  # Returning the clean list of staged ruby files
+  ruby_files
 end
 
 
@@ -84,5 +78,49 @@ def transform_file(code_files)
   end
 
   findings
+end
+
+# Starting the main orchestration flow by grabbing the current directory where git is running
+project_root = Dir.pwd
+
+# Firing up our crawler to find every ruby file in the project
+all_code_files = file_loader()
+
+# Sending the list of files to the scanner to hunt for hardcoded secrets
+leaks = transform_file(all_code_files)
+
+# Checking if the scanner came back completely clean
+if leaks.empty?
+  # Giving git the green light (Exit 0) to proceed with the commit silently
+  exit 0
+  
+# Handling the scenario where we actually found dangerous data
+else
+  # Printing a loud warning to the terminal so the dev stops what they are doing
+  puts "\nSaint Trina: Potential secrets detected in your code!"
+  
+  # Looping through the findings to show the user exactly where they messed up
+  leaks.each do |leak|
+    puts " -> File: #{leak[:path]} | Line: #{leak[:line]} | Match: #{leak[:content]}"
+  end
+  
+  # Asking the user if they want to fix it or force it through
+  print "\nDo you want to Abort (A) or force the Commit anyway (C)? [A/C]: "
+  
+  # Opening a direct hardware line to the keyboard because git hijacks standard input
+  user_choice = File.open('/dev/tty', 'r') { |tty| tty.gets.chomp.upcase }
+  
+  # Evaluating the user's manual override choice
+  if user_choice == 'C'
+    # Letting the dev proceed at their own risk
+    puts "Saint Trina: Overriding lock. Proceeding with commit..."
+    exit 0
+  else
+    # Smashing the abort button (Exit 1) and telling git to halt the commit process
+    puts "Saint Trina: Commit aborted. Stay safe."
+    exit 1
+    
+  end
 
 end
+
