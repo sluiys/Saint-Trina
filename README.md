@@ -4,9 +4,6 @@
   <img src="https://raw.githubusercontent.com/sluiys/Saint-Trina/refs/heads/main/saint-trina.jpg" width="600" alt="Saint Trina Logo">
 </div>
 
-![Ruby](https://img.shields.io/badge/Ruby-CC342D?style=for-the-badge&logo=ruby&logoColor=white)
-![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)
-
 Saint Trina is a local pre-commit hook that statically analyzes staged files to prevent the leakage of sensitive data and hardcoded tokens into version control.
 
 ## Installation
