@@ -9,6 +9,34 @@
 # The user can approve that commit or review what the script found.
 
 
+# The master dictionary of all dangerous patterns Saint Trina is hunting for.
+# We use a Constant (capitalized) so it's globally available and built only once in memory.
+SIGNATURES = {
+  "AWS Access Key" => /AKIA[A-Z0-9]{16}/,
+  "GitHub Token"   => /gh[posr]_[a-zA-Z0-9]{36}/,
+  "Stripe Key"     => /[sr]k_(test|live)_[a-zA-Z0-9]{24}/,
+  "Google API Key" => /AIza[a-zA-Z0-9\-_]{35}/,
+  "Slack Token"    => /xox[bpe]-[a-zA-Z0-9\-]+/,
+  "Generic Secret" => /(?i)(password|passwd|pwd|secret|token|api_key)\s*(=|:|=>)\s*["'][a-zA-Z0-9\-_]{8,}["']/
+}
+
+# The whitelist of file extensions that Saint Trina is allowed to open and read line by line.
+# If a file doesn't end with one of these, we don't waste memory trying to parse it.
+SCANNABLE_EXTENSIONS = [
+  '.rb', '.py', '.js', '.ts', '.php', '.java', '.cs', '.go', '.sh',
+  '.json', '.yml', '.yaml', '.ini', '.cfg', '.toml', '.xml'
+]
+
+# The blacklist of files that trigger an immediate lockdown just by existing in the commit.
+# We don't even read these files; their presence alone is a critical security breach.
+CRITICAL_FILES = [
+  '.env', '.env.local', '.env.production', 
+  '.pem', '.key', '.crt', '.p12', 
+  'id_rsa', 'id_ed25519', 
+  'credentials.json', 'secrets.yml'
+]
+
+
 # File loader method finds all code files in a given directory and its subdirectories.
 # Only Ruby files at the moment (for testing)
 def file_loader
@@ -21,27 +49,42 @@ def file_loader
   all_staged_files = staged_files_raw.split("\n")
 
   # Filtering the array to keep only the ruby files that actually exist on the disk
-  ruby_files = all_staged_files.select do |file_path|
-    # Making sure it has a .rb extension AND checking if the file exists
-    # We must check File.exist? because if you DELETE a ruby file and commit the deletion,
-    # git will list it, but our File.foreach would crash trying to read a ghost file
-    file_path.end_with?('.rb') && File.exist?(file_path)
-  # Closing the filter block
+  code_files = all_staged_files.select do |file_path|
+
+    # Ensuring the file exists on disk, AND checking if it matches our arrays
+    # The splat operator (*) unpacks the array directly into native arguments for maximum speed
+  File.exist?(file_path) && (
+        file_path.end_with?(*SCANNABLE_EXTENSIONS) || 
+        file_path.end_with?(*CRITICAL_FILES)
+  )
   end
 
-  # Returning the clean list of staged ruby files
-  ruby_files
+  # Returning the clean list
+  code_files
 end
 
 
 def transform_file(code_files)
   findings = []
 
-  # AWS keys: 'AKIA' followed by exactly 16 uppercase letters or numbers
-  aws_regex = /AKIA[A-Z0-9]{16}/
-
   # Grabbing the list of files and walking through them one at a time
   code_files.each do |file_path|
+    
+    # EXTREME RISK ZONE: Intercepting critical files before we even try to open them
+    if file_path.end_with?(*CRITICAL_FILES)
+      
+      # Immediately flagging the file as a leak without reading a single line of code
+      findings << {
+        path: file_path,
+        line: "N/A", # There is no specific line to fix, the whole file is illegal
+        type: "Restricted File Format",
+        content: "Blocked by Saint Trina strict policy"
+      }
+      
+      # Skipping to the next file in the loop, completely bypassing the File.foreach
+      next
+      
+    end
     
     # Streaming the file line by line straight from the hard drive, tagging each with its actual line number
     File.foreach(file_path).with_index(1) do |line, line_number|
@@ -52,29 +95,27 @@ def transform_file(code_files)
         break
       end
       
-      # Firing the regex engine at the current line to see if it triggers.
-      if line.match?(aws_regex)
-        
-        # The regex caught something, but let's see if the dev left a sticky note to ignore this exact line
-        unless line.include?('saint-trina:ignore-line')
+      # Iterating through our master dictionary of signatures to check for various leaks
+      SIGNATURES.each do |secret_name, regex|
           
-          # Packing up the evidence into a clean hash and shoving it into our hit list
-          findings << {
-            # Pinpointing the exact file where the slip-up happened
-            path: file_path,
-            # Recording the exact line number so the dev can fix it fast
-            line: line_number,
-            # Snagging the actual string data while shaving off annoying whitespace or newline characters. (Aesthetics only)
-            content: line.strip
-          # Closing the evidence hash  
-          }
+        # Firing the current regex engine at the line
+        if line.match?(regex)
           
+          # The regex caught something, but let's see if the dev left a sticky note to ignore this exact line
+          unless line.include?('saint-trina:ignore-line')
+            
+            # Packing up the evidence into a clean hash and shoving it into our hit list
+            findings << {
+              path: file_path,
+              line: line_number,
+              type: secret_name,
+              content: line.strip
+            }
+            
+          end
         end
-        
       end
-      
     end
-    
   end
 
   findings
@@ -97,15 +138,16 @@ if leaks.empty?
 # Handling the scenario where we actually found dangerous data
 else
   # Printing a loud warning to the terminal so the dev stops what they are doing
-  puts "\nSaint Trina: Potential secrets detected in your code!"
+  puts "\n\e[1;31mSaint Trina: Potential secrets detected in your code!\e[0m"
   
   # Looping through the findings to show the user exactly where they messed up
   leaks.each do |leak|
-    puts " -> File: #{leak[:path]} | Line: #{leak[:line]} | Match: #{leak[:content]}"
+    # Upgraded output format to clearly state the TYPE of secret found
+    puts "-> \e[33m[#{leak[:type]}]\e[0m File: \e[36m#{leak[:path]}\e[0m | Line: #{leak[:line]} | Match: \e[31m#{leak[:content]}\e[0m"
   end
   
   # Asking the user if they want to fix it or force it through
-  print "\nDo you want to Abort (A) or force the Commit anyway (C)? [A/C]: "
+  print "\n\e[1;33mDo you want to Abort (A) or force the Commit anyway (C)? [A/C]: \e[0m"
   
   # Opening a direct hardware line to the keyboard because git hijacks standard input
   user_choice = File.open('/dev/tty', 'r') { |tty| tty.gets.chomp.upcase }
@@ -113,14 +155,13 @@ else
   # Evaluating the user's manual override choice
   if user_choice == 'C'
     # Letting the dev proceed at their own risk
-    puts "Saint Trina: Overriding lock. Proceeding with commit..."
+    puts "\e[33mSaint Trina: Overriding lock. Proceeding with commit...\e[0m"
     exit 0
   else
     # Smashing the abort button (Exit 1) and telling git to halt the commit process
-    puts "Saint Trina: Commit aborted. Stay safe."
+    puts "\e[32mSaint Trina: Commit aborted. Stay safe.\e[0m"
     exit 1
     
   end
 
 end
-
