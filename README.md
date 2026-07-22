@@ -1,4 +1,4 @@
-# Saint Trina
+# <div align="center"> Saint Trina </div>
 
 <div align="center">
   <img src="https://raw.githubusercontent.com/sluiys/Saint-Trina/refs/heads/main/st-trina.avif" width="600" alt="Saint Trina Logo">
